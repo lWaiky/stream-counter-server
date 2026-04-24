@@ -49,6 +49,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 const overlays = new Set();
+const panels = new Set();
 
 wss.on('connection', (ws, req) => {
   console.log('[+] Cliente conectado');
@@ -60,6 +61,13 @@ wss.on('connection', (ws, req) => {
     if (msg.role === 'overlay') {
       overlays.add(ws);
       console.log('[overlay] Overlay registrado, total:', overlays.size);
+      return;
+    }
+
+    if (msg.role === 'panel') {
+      panels.add(ws);
+      console.log('[panel] Panel registrado');
+      ws.send(JSON.stringify({ remaining: currentRemaining }));
       return;
     }
 
@@ -87,6 +95,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     overlays.delete(ws);
+    panels.delete(ws);
     console.log('[-] Cliente desconectado');
   });
 });
