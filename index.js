@@ -14,6 +14,7 @@ const TWITCH_CHANNEL = '#onlyflan_es';
 
 // Estado del contador (para responder !tiempo)
 let currentRemaining = 4 * 3600;
+let streamStartTime = Date.now();
 
 // ── Servidor HTTP + WebSocket ─────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -102,8 +103,9 @@ function connectTwitch() {
   twitchClient.on('message', (channel, tags, message, self) => {
     if (self) return;
     if (message.trim().toLowerCase() === '!extensible') {
+      const elapsed = Math.floor((Date.now() - streamStartTime) / 1000);
       const response = currentRemaining > 0
-        ? 'Tiempo restante en stream: ' + fmtTime(currentRemaining)
+        ? 'Tiempo transcurrido: ' + fmtTime(elapsed) + ' | Tiempo restante: ' + fmtTime(currentRemaining)
         : 'El contador esta en 0!';
       twitchClient.say(channel, response);
       console.log('[Twitch] !tiempo ->', response);
