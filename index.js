@@ -38,6 +38,14 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
+    // Sincronización de tiempo desde el overlay
+    if (msg.role === 'sync') {
+      if (msg.remaining !== undefined) {
+        currentRemaining = msg.remaining;
+      }
+      return;
+    }
+
     if (msg.secret !== SECRET) {
       console.warn('[-] Clave incorrecta');
       return;
