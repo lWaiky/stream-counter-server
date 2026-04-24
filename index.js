@@ -1,4 +1,6 @@
 const http = require('http');
+const fs = require('fs');
+const STATE_FILE = '/tmp/counter-state.json';
 const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
 
@@ -54,9 +56,9 @@ wss.on('connection', (ws, req) => {
     console.log('[->] Evento:', msg.type, msg.amount || '');
 
     // Actualizar estado local si es set_time o reset
-    if (msg.type === 'set_time') currentRemaining = Math.round((msg.amount || 0) * 60);
-    if (msg.type === 'start_stream') { streamStartTime = Date.now(); console.log('[Stream] Inicio registrado'); }
-    if (msg.type === 'reset') { currentRemaining = 0; streamStartTime = null; }
+    if (msg.type === 'set_time') { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
+    if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
+    if (msg.type === 'reset') { currentRemaining = 0; streamStartTime = null; saveState(); }
 
     broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
   });
