@@ -1,22 +1,45 @@
 const http = require('http');
-const fs = require('fs');
-const STATE_FILE = '/tmp/counter-state.json';
+const fs   = require('fs');
 const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
+const tmi  = require('tmi.js');
 
+// ─── CONFIGURACIÓN ───────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
 const SECRET          = process.env.SECRET || 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA';
 const PORT            = process.env.PORT || 8080;
 const ALLOWED_CHANNEL = '';
+const TWITCH_TOKEN    = process.env.TWITCH_TOKEN;
+const TWITCH_USER     = 'onlyflan_es';
+const STATE_FILE      = '/tmp/counter-state.json';
+// ─────────────────────────────────────────────────────────────
 
-// Twitch IRC
-const TWITCH_TOKEN   = process.env.TWITCH_TOKEN; // oauth:xxxx
-const TWITCH_USER    = 'onlyflan_es';
-const TWITCH_CHANNEL = '#onlyflan_es';
+// ── Estado persistente ────────────────────────────────────────
+function loadState() {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      console.log('[State] Estado cargado:', data);
+      return data;
+    }
+  } catch(e) { console.warn('[State] Error cargando:', e.message); }
+  return { remaining: 4 * 3600, streamStartTime: null };
+}
 
-// Estado del contador (para responder !tiempo)
-let currentRemaining = 4 * 3600;
-let streamStartTime = null;
+function saveState() {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      remaining: currentRemaining,
+      streamStartTime: streamStartTime,
+    }));
+  } catch(e) { console.warn('[State] Error guardando:', e.message); }
+}
+
+const initialState    = loadState();
+let currentRemaining  = initialState.remaining;
+let streamStartTime   = initialState.streamStartTime;
+
+setInterval(saveState, 30000);
 
 // ── Servidor HTTP + WebSocket ─────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -40,10 +63,10 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    // Sincronización de tiempo desde el overlay
     if (msg.role === 'sync') {
       if (msg.remaining !== undefined) {
         currentRemaining = msg.remaining;
+        saveState();
       }
       return;
     }
@@ -55,10 +78,9 @@ wss.on('connection', (ws, req) => {
 
     console.log('[->] Evento:', msg.type, msg.amount || '');
 
-    // Actualizar estado local si es set_time o reset
-    if (msg.type === 'set_time') { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
+    if (msg.type === 'set_time')     { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
     if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
-    if (msg.type === 'reset') { currentRemaining = 0; streamStartTime = null; saveState(); }
+    if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; saveState(); }
 
     broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
   });
@@ -80,9 +102,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('[OK] Servidor escuchando en puerto', PORT);
 });
 
-// ── Bot de Twitch con tmi.js ─────────────────────────────────
-const tmi = require('tmi.js');
-
+// ── Bot de Twitch ─────────────────────────────────────────────
 function fmtTime(secs) {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -93,10 +113,7 @@ function fmtTime(secs) {
 }
 
 function connectTwitch() {
-  if (!TWITCH_TOKEN) {
-    console.warn('[Twitch] No hay TWITCH_TOKEN, saltando');
-    return;
-  }
+  if (!TWITCH_TOKEN) { console.warn('[Twitch] No hay TWITCH_TOKEN'); return; }
 
   const twitchClient = new tmi.Client({
     identity: { username: TWITCH_USER, password: TWITCH_TOKEN },
@@ -107,7 +124,7 @@ function connectTwitch() {
   twitchClient.connect().then(() => {
     console.log('[Twitch] Conectado al chat de', TWITCH_USER);
   }).catch(err => {
-    console.error('[Twitch] Error al conectar:', err);
+    console.error('[Twitch] Error:', err);
     setTimeout(connectTwitch, 10000);
   });
 
@@ -119,12 +136,12 @@ function connectTwitch() {
         ? (elapsed !== null ? 'Transcurrido: ' + fmtTime(elapsed) + ' | ' : '') + 'Tiempo restante: ' + fmtTime(currentRemaining)
         : 'El contador esta en 0!';
       twitchClient.say(channel, response);
-      console.log('[Twitch] !tiempo ->', response);
+      console.log('[Twitch] !extensible ->', response);
     }
   });
 
   twitchClient.on('disconnected', (reason) => {
-    console.warn('[Twitch] Desconectado:', reason, '- reconectando en 10s...');
+    console.warn('[Twitch] Desconectado:', reason);
     setTimeout(connectTwitch, 10000);
   });
 }
@@ -178,10 +195,10 @@ discordClient.on('messageCreate', async (message) => {
     case 'raid':       broadcastOverlay({ type: 'raid' });      reply = 'Raid anadido'; break;
     case 'donation':   broadcastOverlay({ type: 'donation' });  reply = 'Donacion anadida'; break;
     case 'toggle':     broadcastOverlay({ type: 'toggle' });    reply = 'Pausa/reanudar'; break;
-    case 'reset':      currentRemaining = 0; broadcastOverlay({ type: 'reset' }); reply = 'Reiniciado'; break;
+    case 'reset':      currentRemaining = 0; streamStartTime = null; saveState(); broadcastOverlay({ type: 'reset' }); reply = 'Reiniciado'; break;
     case 'set_time':
       if (!arg) { message.reply('Uso: !settimer 180 (minutos)'); return; }
-      currentRemaining = Math.round(arg * 60);
+      currentRemaining = Math.round(arg * 60); saveState();
       broadcastOverlay({ type: 'set_time', amount: arg });
       reply = 'Contador ajustado a ' + arg + ' min'; break;
     case 'bits':
