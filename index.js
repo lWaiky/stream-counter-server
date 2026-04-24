@@ -77,6 +77,7 @@ const COMMANDS = {
   '!quitar':   { type: 'custom_neg' },
   '!pausar':   { type: 'toggle' },
   '!reiniciar':{ type: 'reset' },
+  '!settimer':  { type: 'set_time' },
 };
 
 const discordClient = new Client({
@@ -112,6 +113,7 @@ discordClient.on('messageCreate', async (message) => {
     case 'donation':   broadcastOverlay({ type: 'donation' });  reply = 'Donacion anadida'; break;
     case 'toggle':     broadcastOverlay({ type: 'toggle' });    reply = 'Pausa/reanudar'; break;
     case 'reset':      broadcastOverlay({ type: 'reset' });     reply = 'Reiniciado'; break;
+    case 'set_time':   broadcastOverlay({ type: 'set_time', amount: arg }); reply = 'Tiempo ajustado a ' + arg + ' min'; break;
     case 'bits':
       if (!arg || arg <= 0) { message.reply('Uso: !bits 500'); return; }
       broadcastOverlay({ type: 'bits', amount: arg });
