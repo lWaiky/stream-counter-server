@@ -35,6 +35,8 @@ function saveState() {
   } catch(e) { console.warn('[State] Error guardando:', e.message); }
 }
 
+const contributors = {}; // { username: totalSeconds }
+
 const initialState    = loadState();
 let currentRemaining  = initialState.remaining;
 let streamStartTime   = initialState.streamStartTime;
@@ -75,11 +77,14 @@ wss.on('connection', (ws, req) => {
       if (msg.remaining !== undefined) {
         currentRemaining = msg.remaining;
         saveState();
-        // Notificar al panel inmediatamente
         const data = JSON.stringify({ remaining: currentRemaining });
         for (const client of panels) {
           if (client.readyState === 1) client.send(data);
         }
+      }
+      // Registrar contribucion de usuario
+      if (msg.username && msg.seconds) {
+        contributors[msg.username] = (contributors[msg.username] || 0) + msg.seconds;
       }
       return;
     }
@@ -93,7 +98,7 @@ wss.on('connection', (ws, req) => {
 
     if (msg.type === 'set_time')     { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
     if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
-    if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; serverPaused = false; saveState(); }
+    if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; saveState(); Object.keys(contributors).forEach(k => delete contributors[k]); }
 
     broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
   });
@@ -144,6 +149,23 @@ function connectTwitch() {
 
   twitchClient.on('message', (channel, tags, message, self) => {
     if (self) return;
+    if (message.trim().toLowerCase() === '!top') {
+      const sorted = Object.entries(contributors)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+      if (sorted.length === 0) {
+        twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
+      } else {
+        const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+        const top = sorted.map(([user, secs], i) => {
+          const m = Math.floor(secs / 60);
+          return medals[i] + ' ' + user + ' (' + m + 'min)';
+        }).join(' | ');
+        twitchClient.say(channel, 'Top contribuidores: ' + top);
+      }
+      return;
+    }
+
     if (message.trim().toLowerCase() === '!extensible') {
       const elapsed = streamStartTime ? Math.floor((Date.now() - streamStartTime) / 1000) : null;
       const response = currentRemaining > 0
