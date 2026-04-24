@@ -14,7 +14,7 @@ const TWITCH_CHANNEL = '#onlyflan_es';
 
 // Estado del contador (para responder !tiempo)
 let currentRemaining = 4 * 3600;
-let streamStartTime = Date.now();
+let streamStartTime = null;
 
 // ── Servidor HTTP + WebSocket ─────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -47,7 +47,8 @@ wss.on('connection', (ws, req) => {
 
     // Actualizar estado local si es set_time o reset
     if (msg.type === 'set_time') currentRemaining = Math.round((msg.amount || 0) * 60);
-    if (msg.type === 'reset') currentRemaining = 0;
+    if (msg.type === 'start_stream') { streamStartTime = Date.now(); console.log('[Stream] Inicio registrado'); }
+    if (msg.type === 'reset') { currentRemaining = 0; streamStartTime = null; }
 
     broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
   });
@@ -103,9 +104,9 @@ function connectTwitch() {
   twitchClient.on('message', (channel, tags, message, self) => {
     if (self) return;
     if (message.trim().toLowerCase() === '!extensible') {
-      const elapsed = Math.floor((Date.now() - streamStartTime) / 1000);
+      const elapsed = streamStartTime ? Math.floor((Date.now() - streamStartTime) / 1000) : null;
       const response = currentRemaining > 0
-        ? 'Tiempo transcurrido: ' + fmtTime(elapsed) + ' | Tiempo restante: ' + fmtTime(currentRemaining)
+        ? (elapsed !== null ? 'Transcurrido: ' + fmtTime(elapsed) + ' | ' : '') + 'Tiempo restante: ' + fmtTime(currentRemaining)
         : 'El contador esta en 0!';
       twitchClient.say(channel, response);
       console.log('[Twitch] !tiempo ->', response);
