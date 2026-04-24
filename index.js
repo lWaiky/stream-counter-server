@@ -6,8 +6,8 @@ const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
 
 // ─── CONFIGURACIÓN ───────────────────────────────────────────
-const DISCORD_TOKEN   = 'TU_TOKEN_DE_DISCORD_AQUÍ';
-const SECRET          = 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA'; // igual en panel web y overlay
+const DISCORD_TOKEN   = 'MTQ3ODEyODg5ODE0NjMwODM4Nw.GklCEq.rOdXSaCqNDRci2RvnOEnkJwhZry_F3706GRmvA';
+const SECRET          = 'onlyflanstreamer'; // igual en panel web y overlay
 const PORT            = 8021;
 
 // Canal de Discord donde se permiten los comandos
