@@ -7,7 +7,6 @@ const SECRET          = process.env.SECRET || 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA
 const PORT            = process.env.PORT || 8080;
 const ALLOWED_CHANNEL = '';
 
-// Servidor HTTP base (necesario para Railway)
 const server = http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Stream Counter Server OK');
@@ -15,38 +14,49 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 const overlays = new Set();
+const panels   = new Set();
 
 wss.on('connection', (ws, req) => {
-  console.log('[+] Cliente conectado desde', req.socket.remoteAddress);
+  console.log('[+] Cliente conectado');
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
+    // Identificacion
     if (msg.role === 'overlay') {
       overlays.add(ws);
       console.log('[overlay] Overlay registrado, total:', overlays.size);
       return;
     }
+    if (msg.role === 'panel') {
+      panels.add(ws);
+      console.log('[panel] Panel registrado');
+      return;
+    }
 
+    // Verificar clave
     if (msg.secret !== SECRET) {
       console.warn('[-] Clave incorrecta');
       return;
     }
 
     console.log('[->] Evento:', msg.type, msg.amount || '');
-    broadcast({ type: msg.type, amount: msg.amount || 0 });
+
+    // Reenviar a overlays
+    broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
   });
 
   ws.on('close', () => {
     overlays.delete(ws);
-    console.log('[-] Cliente desconectado, overlays:', overlays.size);
+    panels.delete(ws);
+    console.log('[-] Cliente desconectado');
   });
 });
 
-function broadcast(payload) {
+function broadcastOverlay(payload) {
   const data = JSON.stringify(payload);
-  console.log('[broadcast] Enviando a', overlays.size, 'overlays:', data);
+  console.log('[broadcast]', data, '-> overlays:', overlays.size);
   for (const client of overlays) {
     if (client.readyState === 1) client.send(data);
   }
@@ -64,6 +74,9 @@ const COMMANDS = {
   '!donacion': { type: 'donation' },
   '!bits':     { type: 'bits' },
   '!sumar':    { type: 'custom' },
+  '!quitar':   { type: 'custom_neg' },
+  '!pausar':   { type: 'toggle' },
+  '!reiniciar':{ type: 'reset' },
 };
 
 const discordClient = new Client({
@@ -92,19 +105,25 @@ discordClient.on('messageCreate', async (message) => {
   let reply = '';
 
   switch (type) {
-    case 'follower': broadcast({ type: 'follower' }); reply = 'Seguidor anadido'; break;
-    case 'sub':      broadcast({ type: 'sub' });      reply = 'Sub anadido'; break;
-    case 'resub':    broadcast({ type: 'resub' });    reply = 'Resub anadido'; break;
-    case 'raid':     broadcast({ type: 'raid' });     reply = 'Raid anadido'; break;
-    case 'donation': broadcast({ type: 'donation' }); reply = 'Donacion anadida'; break;
+    case 'follower':   broadcastOverlay({ type: 'follower' });  reply = 'Seguidor anadido'; break;
+    case 'sub':        broadcastOverlay({ type: 'sub' });       reply = 'Sub anadido'; break;
+    case 'resub':      broadcastOverlay({ type: 'resub' });     reply = 'Resub anadido'; break;
+    case 'raid':       broadcastOverlay({ type: 'raid' });      reply = 'Raid anadido'; break;
+    case 'donation':   broadcastOverlay({ type: 'donation' });  reply = 'Donacion anadida'; break;
+    case 'toggle':     broadcastOverlay({ type: 'toggle' });    reply = 'Pausa/reanudar'; break;
+    case 'reset':      broadcastOverlay({ type: 'reset' });     reply = 'Reiniciado'; break;
     case 'bits':
       if (!arg || arg <= 0) { message.reply('Uso: !bits 500'); return; }
-      broadcast({ type: 'bits', amount: arg });
+      broadcastOverlay({ type: 'bits', amount: arg });
       reply = arg + ' bits anadidos'; break;
     case 'custom':
       if (!arg || arg <= 0) { message.reply('Uso: !sumar 3'); return; }
-      broadcast({ type: 'custom', amount: arg });
+      broadcastOverlay({ type: 'custom', amount: arg });
       reply = '+' + arg + ' minutos anadidos'; break;
+    case 'custom_neg':
+      if (!arg || arg <= 0) { message.reply('Uso: !quitar 3'); return; }
+      broadcastOverlay({ type: 'custom', amount: -arg });
+      reply = '-' + arg + ' minutos quitados'; break;
   }
 
   if (reply) message.reply(reply);
