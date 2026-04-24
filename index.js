@@ -1,7 +1,6 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
-const net = require('net');
 
 const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
 const SECRET          = process.env.SECRET || 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA';
@@ -69,69 +68,51 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('[OK] Servidor escuchando en puerto', PORT);
 });
 
-// ── Bot de Twitch IRC ─────────────────────────────────────────
+// ── Bot de Twitch con tmi.js ─────────────────────────────────
+const tmi = require('tmi.js');
+
 function fmtTime(secs) {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = secs % 60;
-  if (h > 0) return `${h}h ${m}m ${s}s`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+  if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
 }
-
-let twitchClient = null;
 
 function connectTwitch() {
   if (!TWITCH_TOKEN) {
-    console.warn('[Twitch] No hay TWITCH_TOKEN, saltando conexión IRC');
+    console.warn('[Twitch] No hay TWITCH_TOKEN, saltando');
     return;
   }
 
-  twitchClient = new net.Socket();
-  let buffer = '';
-
-  twitchClient.connect(6667, 'irc.chat.twitch.tv', () => {
-    console.log('[Twitch] Conectado al IRC');
-    twitchClient.write(`PASS ${TWITCH_TOKEN}\r\n`);
-    twitchClient.write(`NICK ${TWITCH_USER}\r\n`);
-    twitchClient.write(`JOIN ${TWITCH_CHANNEL}\r\n`);
+  const twitchClient = new tmi.Client({
+    identity: { username: TWITCH_USER, password: TWITCH_TOKEN },
+    channels: [TWITCH_USER],
+    options: { debug: false },
   });
 
-  twitchClient.on('data', (data) => {
-    buffer += data.toString();
-    const lines = buffer.split('\r\n');
-    buffer = lines.pop();
-
-    for (const line of lines) {
-      // Responder PING para mantener conexión
-      if (line.startsWith('PING')) {
-        twitchClient.write('PONG :tmi.twitch.tv\r\n');
-        continue;
-      }
-
-      // Detectar mensajes del chat
-      const match = line.match(/^:(\w+)!\w+@\w+\.tmi\.twitch\.tv PRIVMSG #\w+ :(.+)$/);
-      if (!match) continue;
-
-      const msg = match[2].trim().toLowerCase();
-
-      if (msg === '!tiempo') {
-        const response = currentRemaining > 0
-          ? `⏱️ Tiempo restante en stream: ${fmtTime(currentRemaining)}`
-          : '⏱️ El contador está en 0, ¡el stream ha terminado!';
-        twitchClient.write(`PRIVMSG ${TWITCH_CHANNEL} :${response}\r\n`);
-        console.log('[Twitch] !tiempo respondido:', response);
-      }
-    }
-  });
-
-  twitchClient.on('close', () => {
-    console.warn('[Twitch] Desconectado, reconectando en 10s...');
+  twitchClient.connect().then(() => {
+    console.log('[Twitch] Conectado al chat de', TWITCH_USER);
+  }).catch(err => {
+    console.error('[Twitch] Error al conectar:', err);
     setTimeout(connectTwitch, 10000);
   });
 
-  twitchClient.on('error', (err) => {
-    console.error('[Twitch] Error:', err.message);
+  twitchClient.on('message', (channel, tags, message, self) => {
+    if (self) return;
+    if (message.trim().toLowerCase() === '!tiempo') {
+      const response = currentRemaining > 0
+        ? 'Tiempo restante en stream: ' + fmtTime(currentRemaining)
+        : 'El contador esta en 0!';
+      twitchClient.say(channel, response);
+      console.log('[Twitch] !tiempo ->', response);
+    }
+  });
+
+  twitchClient.on('disconnected', (reason) => {
+    console.warn('[Twitch] Desconectado:', reason, '- reconectando en 10s...');
+    setTimeout(connectTwitch, 10000);
   });
 }
 
