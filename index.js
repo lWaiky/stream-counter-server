@@ -152,16 +152,18 @@ function connectTwitch() {
     if (message.trim().toLowerCase() === '!top') {
       const sorted = Object.entries(contributors)
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
+        .slice(0, 5);
       if (sorted.length === 0) {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
       } else {
-        const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
-        const top = sorted.map(([user, secs], i) => {
-          const m = Math.floor(secs / 60);
-          return medals[i] + ' ' + user + ' (' + m + 'min)';
-        }).join(' | ');
-        twitchClient.say(channel, 'Top contribuidores: ' + top);
+        const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
+        twitchClient.say(channel, '🏆 Top contribuidores del stream:');
+        sorted.forEach(([user, secs], i) => {
+          setTimeout(() => {
+            const m = Math.floor(secs / 60);
+            twitchClient.say(channel, medals[i] + ' ' + user + ' — ' + m + ' min');
+          }, i * 600);
+        });
       }
       return;
     }
