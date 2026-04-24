@@ -101,7 +101,7 @@ function connectTwitch() {
 
   twitchClient.on('message', (channel, tags, message, self) => {
     if (self) return;
-    if (message.trim().toLowerCase() === '!tiempo') {
+    if (message.trim().toLowerCase() === '!extensible') {
       const response = currentRemaining > 0
         ? 'Tiempo restante en stream: ' + fmtTime(currentRemaining)
         : 'El contador esta en 0!';
