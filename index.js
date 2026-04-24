@@ -89,7 +89,6 @@ wss.on('connection', (ws, req) => {
     if (msg.type === 'set_time')     { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
     if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
     if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; serverPaused = false; saveState(); }
-    if (msg.type === 'toggle')       { serverPaused = !serverPaused; }
 
     broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
   });
