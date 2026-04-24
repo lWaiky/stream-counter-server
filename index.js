@@ -6,7 +6,7 @@ const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
 
 // ─── CONFIGURACIÓN ───────────────────────────────────────────
-const DISCORD_TOKEN   = 'MTQ3ODEyODg5ODE0NjMwODM4Nw.GklCEq.rOdXSaCqNDRci2RvnOEnkJwhZry_F3706GRmvA';
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const SECRET          = 'onlyflanstreamer'; // igual en panel web y overlay
 const PORT            = 8021;
 
