@@ -1,16 +1,19 @@
-// index.js — Servidor WebSocket + Bot de Discord todo en uno
-
+const http = require('http');
 const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
 
-// ─── CONFIGURACIÓN ───────────────────────────────────────────
 const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
 const SECRET          = process.env.SECRET || 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA';
-const PORT            = process.env.PORT || 8021;
+const PORT            = process.env.PORT || 8080;
 const ALLOWED_CHANNEL = '';
-// ─────────────────────────────────────────────────────────────
 
-const wss = new WebSocketServer({ port: PORT, host: '0.0.0.0' });
+// Servidor HTTP base (necesario para Railway)
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Stream Counter Server OK');
+});
+
+const wss = new WebSocketServer({ server });
 const overlays = new Set();
 
 wss.on('connection', (ws, req) => {
@@ -49,14 +52,15 @@ function broadcast(payload) {
   }
 }
 
-console.log('[OK] Servidor WebSocket escuchando en puerto', PORT);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log('[OK] Servidor escuchando en puerto', PORT);
+});
 
 const COMMANDS = {
   '!seguidor': { type: 'follower' },
   '!sub':      { type: 'sub' },
   '!resub':    { type: 'resub' },
   '!raid':     { type: 'raid' },
-  '!donacion': { type: 'donation' },
   '!donacion': { type: 'donation' },
   '!bits':     { type: 'bits' },
   '!sumar':    { type: 'custom' },
