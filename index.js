@@ -75,6 +75,11 @@ wss.on('connection', (ws, req) => {
       if (msg.remaining !== undefined) {
         currentRemaining = msg.remaining;
         saveState();
+        // Notificar al panel inmediatamente
+        const data = JSON.stringify({ remaining: currentRemaining });
+        for (const client of panels) {
+          if (client.readyState === 1) client.send(data);
+        }
       }
       return;
     }
