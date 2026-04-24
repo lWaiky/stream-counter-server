@@ -1,76 +1,68 @@
 // index.js — Servidor WebSocket + Bot de Discord todo en uno
-// Instala dependencias: npm install discord.js ws
-// Arrancar: node index.js
 
 const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
 
 // ─── CONFIGURACIÓN ───────────────────────────────────────────
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const SECRET          = 'onlyflanstreamer'; // igual en panel web y overlay
-const PORT            = 8021;
-
-// Canal de Discord donde se permiten los comandos
-// Pon el ID del canal o déjalo vacío ('') para permitir cualquier canal
+const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
+const SECRET          = process.env.SECRET || 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA';
+const PORT            = process.env.PORT || 8021;
 const ALLOWED_CHANNEL = '';
 // ─────────────────────────────────────────────────────────────
 
-// ── Servidor WebSocket ────────────────────────────────────────
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ port: PORT, host: '0.0.0.0' });
 const overlays = new Set();
 
 wss.on('connection', (ws, req) => {
-  console.log(`[+] Cliente conectado desde ${req.socket.remoteAddress}`);
+  console.log('[+] Cliente conectado desde', req.socket.remoteAddress);
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
-    // El overlay se identifica al conectarse
     if (msg.role === 'overlay') {
       overlays.add(ws);
-      console.log('[overlay] Overlay registrado');
+      console.log('[overlay] Overlay registrado, total:', overlays.size);
       return;
     }
 
-    // Verificar clave secreta
     if (msg.secret !== SECRET) {
-      console.warn('[-] Clave incorrecta, ignorando');
+      console.warn('[-] Clave incorrecta');
       return;
     }
 
-    console.log(`[→] Evento: ${msg.type} ${msg.amount || ''}`);
+    console.log('[->] Evento:', msg.type, msg.amount || '');
     broadcast({ type: msg.type, amount: msg.amount || 0 });
   });
 
   ws.on('close', () => {
     overlays.delete(ws);
-    console.log('[-] Cliente desconectado');
+    console.log('[-] Cliente desconectado, overlays:', overlays.size);
   });
 });
 
 function broadcast(payload) {
   const data = JSON.stringify(payload);
+  console.log('[broadcast] Enviando a', overlays.size, 'overlays:', data);
   for (const client of overlays) {
     if (client.readyState === 1) client.send(data);
   }
 }
 
-console.log(`[✓] Servidor WebSocket escuchando en puerto ${PORT}`);
+console.log('[OK] Servidor WebSocket escuchando en puerto', PORT);
 
-// ── Bot de Discord ────────────────────────────────────────────
 const COMMANDS = {
   '!seguidor': { type: 'follower' },
   '!sub':      { type: 'sub' },
   '!resub':    { type: 'resub' },
   '!raid':     { type: 'raid' },
   '!donacion': { type: 'donation' },
-  '!donación': { type: 'donation' },
-  '!bits':     { type: 'bits' },   // uso: !bits 500
-  '!sumar':    { type: 'custom' }, // uso: !sumar 3 (minutos directos)
+  '!donacion': { type: 'donation' },
+  '!bits':     { type: 'bits' },
+  '!sumar':    { type: 'custom' },
 };
 
-const client = new Client({
+const discordClient = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
@@ -78,11 +70,11 @@ const client = new Client({
   ],
 });
 
-client.on('ready', () => {
-  console.log(`[✓] Bot conectado como ${client.user.tag}`);
+discordClient.on('clientReady', () => {
+  console.log('[OK] Bot conectado como', discordClient.user.tag);
 });
 
-client.on('messageCreate', async (message) => {
+discordClient.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (ALLOWED_CHANNEL && message.channelId !== ALLOWED_CHANNEL) return;
 
@@ -96,32 +88,22 @@ client.on('messageCreate', async (message) => {
   let reply = '';
 
   switch (type) {
-    case 'follower':
-      broadcast({ type: 'follower' });
-      reply = '👤 Seguidor añadido'; break;
-    case 'sub':
-      broadcast({ type: 'sub' });
-      reply = '⭐ Sub añadido'; break;
-    case 'resub':
-      broadcast({ type: 'resub' });
-      reply = '🔄 Resub añadido'; break;
-    case 'raid':
-      broadcast({ type: 'raid' });
-      reply = '⚔️ Raid añadido'; break;
-    case 'donation':
-      broadcast({ type: 'donation' });
-      reply = '💜 Donación añadida'; break;
+    case 'follower': broadcast({ type: 'follower' }); reply = 'Seguidor anadido'; break;
+    case 'sub':      broadcast({ type: 'sub' });      reply = 'Sub anadido'; break;
+    case 'resub':    broadcast({ type: 'resub' });    reply = 'Resub anadido'; break;
+    case 'raid':     broadcast({ type: 'raid' });     reply = 'Raid anadido'; break;
+    case 'donation': broadcast({ type: 'donation' }); reply = 'Donacion anadida'; break;
     case 'bits':
-      if (!arg || arg <= 0) { message.reply('❌ Uso: `!bits 500`'); return; }
+      if (!arg || arg <= 0) { message.reply('Uso: !bits 500'); return; }
       broadcast({ type: 'bits', amount: arg });
-      reply = `💎 ${arg} bits añadidos`; break;
+      reply = arg + ' bits anadidos'; break;
     case 'custom':
-      if (!arg || arg <= 0) { message.reply('❌ Uso: `!sumar 3`'); return; }
+      if (!arg || arg <= 0) { message.reply('Uso: !sumar 3'); return; }
       broadcast({ type: 'custom', amount: arg });
-      reply = `⏱️ +${arg} minutos añadidos`; break;
+      reply = '+' + arg + ' minutos anadidos'; break;
   }
 
   if (reply) message.reply(reply);
 });
 
-client.login(DISCORD_TOKEN);
+discordClient.login(DISCORD_TOKEN);
