@@ -1,5 +1,4 @@
 const http = require('http');
-const fs   = require('fs');
 const { WebSocketServer } = require('ws');
 const { Client, GatewayIntentBits } = require('discord.js');
 const tmi  = require('tmi.js');
@@ -11,37 +10,55 @@ const PORT            = process.env.PORT || 8080;
 const ALLOWED_CHANNEL = '';
 const TWITCH_TOKEN    = process.env.TWITCH_TOKEN;
 const TWITCH_USER     = 'onlyflan_es';
-const STATE_FILE      = '/tmp/counter-state.json';
+
+// Upstash Redis REST API
+const REDIS_URL   = process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 // ─────────────────────────────────────────────────────────────
 
-function loadState() {
+// ── Redis helpers ─────────────────────────────────────────────
+async function redisGet(key) {
   try {
-    if (fs.existsSync(STATE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      console.log('[State] Estado cargado:', data);
-      return data;
-    }
+    const res = await fetch(`${REDIS_URL}/get/${key}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+    });
+    const data = await res.json();
+    return data.result;
+  } catch(e) { console.error('[Redis] GET error:', e.message); return null; }
+}
+
+async function redisSet(key, value) {
+  try {
+    await fetch(`${REDIS_URL}/set/${key}/${encodeURIComponent(value)}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
+    });
+  } catch(e) { console.error('[Redis] SET error:', e.message); }
+}
+
+// ── Estado ────────────────────────────────────────────────────
+let currentRemaining = 4 * 3600;
+let streamStartTime  = null;
+let serverPaused     = false;
+const contributors   = {};
+const recentAlerts   = new Map();
+
+async function loadState() {
+  try {
+    const remaining = await redisGet('remaining');
+    const startTime = await redisGet('streamStartTime');
+    const paused    = await redisGet('paused');
+    if (remaining !== null) currentRemaining = parseInt(remaining);
+    if (startTime !== null && startTime !== 'null') streamStartTime = parseInt(startTime);
+    if (paused !== null) serverPaused = paused === 'true';
+    console.log('[State] Cargado desde Redis:', { currentRemaining, serverPaused });
   } catch(e) { console.warn('[State] Error cargando:', e.message); }
-  return { remaining: 4 * 3600, streamStartTime: null };
 }
 
-function saveState() {
-  try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({
-      remaining: currentRemaining,
-      streamStartTime: streamStartTime,
-    }));
-  } catch(e) { console.warn('[State] Error guardando:', e.message); }
+async function saveState() {
+  await redisSet('remaining', currentRemaining);
+  await redisSet('streamStartTime', streamStartTime || 'null');
+  await redisSet('paused', serverPaused);
 }
-
-const contributors = {};
-const recentAlerts = new Map(); // anti-duplicados de alertas
-
-const initialState   = loadState();
-let currentRemaining = initialState.remaining;
-let streamStartTime  = initialState.streamStartTime;
-
-setInterval(saveState, 30000);
 
 // ── Servidor HTTP + WebSocket ─────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -49,7 +66,7 @@ const server = http.createServer((req, res) => {
   res.end('Stream Counter Server OK');
 });
 
-const wss = new WebSocketServer({ server });
+const wss      = new WebSocketServer({ server });
 const overlays  = new Set();
 const overlays2 = new Set();
 const panels    = new Set();
@@ -64,53 +81,44 @@ wss.on('connection', (ws, req) => {
 
     if (msg.role === 'overlay') {
       overlays.add(ws);
-      console.log('[overlay] Overlay registrado, total:', overlays.size);
-      // Mandar tiempo actual al overlay al conectarse
+      console.log('[overlay] Registrado, total:', overlays.size);
+      // Mandar tiempo actual al overlay
       ws.send(JSON.stringify({ type: 'set_time', amount: currentRemaining / 60 }));
+      if (serverPaused) ws.send(JSON.stringify({ type: 'toggle' }));
       return;
     }
 
     if (msg.role === 'overlay2') {
       overlays2.add(ws);
-      console.log('[overlay2] Overlay2 registrado');
-      return;
-    }
-
-    if (msg.role === 'tts') {
-      ttsClients.add(ws);
-      console.log('[TTS] Cliente TTS registrado');
+      console.log('[overlay2] Registrado');
       return;
     }
 
     if (msg.role === 'panel') {
       panels.add(ws);
-      console.log('[panel] Panel registrado');
+      console.log('[panel] Registrado');
       ws.send(JSON.stringify({ remaining: currentRemaining }));
+      return;
+    }
+
+    if (msg.role === 'tts') {
+      ttsClients.add(ws);
+      console.log('[TTS] Cliente registrado');
       return;
     }
 
     if (msg.role === 'sync') {
       if (msg.remaining !== undefined) {
         currentRemaining = msg.remaining;
-        saveState();
-        const top5 = Object.entries(contributors).sort((a, b) => b[1] - a[1]).slice(0, 5);
-        const data = JSON.stringify({ remaining: currentRemaining, top5 });
-        for (const client of panels) {
-          if (client.readyState === 1) client.send(data);
-        }
       }
-      if (msg.username && msg.seconds) {
-        contributors[msg.username] = (contributors[msg.username] || 0) + msg.seconds;
-        console.log('[contrib]', msg.username, '->', Math.floor(contributors[msg.username] / 60) + 'min');
-        // Confeti si el evento sumó más de 120 minutos
-        if (msg.seconds >= 120 * 60) {
-          broadcastOverlay2({ type: 'confetti' });
-        }
-        // Mandar alerta al overlay2 - solo una vez por evento
-        if (msg.eventType && msg.eventId) {
-          if (!recentAlerts.has(msg.eventId)) {
-            recentAlerts.set(msg.eventId, Date.now());
-            setTimeout(() => recentAlerts.delete(msg.eventId), 10000);
+      if (msg.username && msg.seconds && msg.eventId) {
+        if (!recentAlerts.has(msg.eventId)) {
+          recentAlerts.set(msg.eventId, Date.now());
+          setTimeout(() => recentAlerts.delete(msg.eventId), 10000);
+          contributors[msg.username] = (contributors[msg.username] || 0) + msg.seconds;
+          console.log('[contrib]', msg.username, '->', Math.floor(contributors[msg.username] / 60) + 'min');
+          if (msg.seconds >= 120 * 60) broadcastOverlay2({ type: 'confetti' });
+          if (msg.eventType) {
             broadcastOverlay2({
               type: msg.eventType,
               username: msg.username,
@@ -131,12 +139,37 @@ wss.on('connection', (ws, req) => {
 
     console.log('[->] Evento:', msg.type, msg.amount || '');
 
-    if (msg.type === 'set_time')     { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
-    if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
-    if (msg.type === 'mute')         { broadcastOverlay({ type: 'mute', amount: msg.amount || 0 }); return; }
-    if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; saveState(); Object.keys(contributors).forEach(k => delete contributors[k]); }
-
-    broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
+    switch(msg.type) {
+      case 'set_time':
+        currentRemaining = Math.round((msg.amount || 0) * 60);
+        saveState();
+        broadcastOverlay({ type: 'set_time', amount: msg.amount });
+        break;
+      case 'start_stream':
+        streamStartTime = Date.now();
+        saveState();
+        console.log('[Stream] Inicio registrado');
+        break;
+      case 'mute':
+        broadcastOverlay({ type: 'mute', amount: msg.amount || 0 });
+        break;
+      case 'toggle':
+        serverPaused = !serverPaused;
+        saveState();
+        broadcastOverlay({ type: 'toggle' });
+        break;
+      case 'reset':
+        currentRemaining = 0;
+        streamStartTime = null;
+        serverPaused = false;
+        saveState();
+        Object.keys(contributors).forEach(k => delete contributors[k]);
+        broadcastOverlay({ type: 'reset' });
+        break;
+      default:
+        broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
+        break;
+    }
   });
 
   ws.on('close', () => {
@@ -166,6 +199,24 @@ function broadcastOverlay2(payload) {
     if (client.readyState === 1) client.send(data);
   }
 }
+
+// ── Countdown del servidor ────────────────────────────────────
+// El servidor es la fuente de verdad — cuenta él solo
+setInterval(() => {
+  if (!serverPaused && currentRemaining > 0) {
+    currentRemaining--;
+  }
+  // Mandar tiempo a panels cada segundo
+  const top5 = Object.entries(contributors).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const data = JSON.stringify({ remaining: currentRemaining, top5 });
+  for (const client of panels) {
+    if (client.readyState === 1) client.send(data);
+  }
+  // Mandar tiempo a overlays cada 10 segundos para corregir desvíos
+}, 1000);
+
+// Guardar en Redis cada 10 segundos
+setInterval(saveState, 10000);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('[OK] Servidor escuchando en puerto', PORT);
@@ -217,14 +268,11 @@ function connectTwitch() {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
       } else {
         const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
-        // Mostrar podio en overlay2
-        const top5data = sorted.map(([u, s]) => [u, s]);
-        broadcastOverlay2({ type: 'top', top5: top5data });
+        broadcastOverlay2({ type: 'top', top5: sorted.map(([u, s]) => [u, s]) });
         twitchClient.say(channel, '🏆 Top contribuidores del stream:');
         sorted.forEach(([user, secs], i) => {
           setTimeout(() => {
-            const m = Math.floor(secs / 60);
-            twitchClient.say(channel, medals[i] + ' ' + user + ' — ' + m + ' min');
+            twitchClient.say(channel, medals[i] + ' ' + user + ' — ' + Math.floor(secs / 60) + ' min');
           }, i * 600);
         });
       }
@@ -237,8 +285,7 @@ function connectTwitch() {
       if (secs === 0) {
         twitchClient.say(channel, '@' + username + ' aun no has sumado tiempo al stream!');
       } else {
-        const m = Math.floor(secs / 60);
-        twitchClient.say(channel, '@' + username + ' has sumado ' + m + ' min al stream! 🕐');
+        twitchClient.say(channel, '@' + username + ' has sumado ' + Math.floor(secs / 60) + ' min al stream! 🕐');
       }
       return;
     }
@@ -249,8 +296,7 @@ function connectTwitch() {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
       } else {
         const [user, secs] = sorted[0];
-        const m = Math.floor(secs / 60);
-        twitchClient.say(channel, '🏆 Record del stream: ' + user + ' con ' + m + ' min sumados!');
+        twitchClient.say(channel, '🏆 Record del stream: ' + user + ' con ' + Math.floor(secs / 60) + ' min sumados!');
       }
       return;
     }
@@ -266,7 +312,6 @@ function connectTwitch() {
       if (!ttsMsg) return;
       const fullMsg = tags.username + ' dice: ' + ttsMsg;
       broadcastOverlay({ type: 'tts', text: fullMsg });
-      console.log('[TTS]', fullMsg);
       return;
     }
 
@@ -276,7 +321,6 @@ function connectTwitch() {
         ? (elapsed !== null ? 'Transcurrido: ' + fmtTime(elapsed) + ' | ' : '') + 'Tiempo restante: ' + fmtTime(currentRemaining)
         : 'El contador esta en 0!';
       twitchClient.say(channel, response);
-      console.log('[Twitch] !extensible ->', response);
     }
   });
 
@@ -285,8 +329,6 @@ function connectTwitch() {
     setTimeout(connectTwitch, 10000);
   });
 }
-
-connectTwitch();
 
 // ── Bot de Discord ────────────────────────────────────────────
 const COMMANDS = {
@@ -334,14 +376,21 @@ discordClient.on('messageCreate', async (message) => {
     case 'resub':      broadcastOverlay({ type: 'resub' });     reply = 'Resub anadido'; break;
     case 'raid':       broadcastOverlay({ type: 'raid' });      reply = 'Raid anadido'; break;
     case 'donation':   broadcastOverlay({ type: 'donation' });  reply = 'Donacion anadida'; break;
-    case 'toggle':     broadcastOverlay({ type: 'toggle' });    reply = 'Pausa/reanudar'; break;
+    case 'toggle':
+      serverPaused = !serverPaused;
+      saveState();
+      broadcastOverlay({ type: 'toggle' });
+      reply = serverPaused ? 'Pausado' : 'Reanudado'; break;
     case 'reset':
-      currentRemaining = 0; streamStartTime = null; saveState();
+      currentRemaining = 0; streamStartTime = null; serverPaused = false;
+      saveState();
       Object.keys(contributors).forEach(k => delete contributors[k]);
-      broadcastOverlay({ type: 'reset' }); reply = 'Reiniciado'; break;
+      broadcastOverlay({ type: 'reset' });
+      reply = 'Reiniciado'; break;
     case 'set_time':
       if (!arg) { message.reply('Uso: !settimer 180 (minutos)'); return; }
-      currentRemaining = Math.round(arg * 60); saveState();
+      currentRemaining = Math.round(arg * 60);
+      saveState();
       broadcastOverlay({ type: 'set_time', amount: arg });
       reply = 'Contador ajustado a ' + arg + ' min'; break;
     case 'bits':
@@ -350,10 +399,14 @@ discordClient.on('messageCreate', async (message) => {
       reply = arg + ' bits anadidos'; break;
     case 'custom':
       if (!arg || arg <= 0) { message.reply('Uso: !sumar 3'); return; }
+      currentRemaining += Math.round(arg * 60);
+      saveState();
       broadcastOverlay({ type: 'custom', amount: arg });
       reply = '+' + arg + ' min anadidos'; break;
     case 'custom_neg':
       if (!arg || arg <= 0) { message.reply('Uso: !quitar 3'); return; }
+      currentRemaining = Math.max(0, currentRemaining - Math.round(arg * 60));
+      saveState();
       broadcastOverlay({ type: 'custom', amount: -arg });
       reply = '-' + arg + ' min quitados'; break;
   }
@@ -361,4 +414,11 @@ discordClient.on('messageCreate', async (message) => {
   if (reply) message.reply(reply);
 });
 
-discordClient.login(DISCORD_TOKEN);
+// ── Arranque ──────────────────────────────────────────────────
+async function main() {
+  await loadState();
+  connectTwitch();
+  discordClient.login(DISCORD_TOKEN);
+}
+
+main();
