@@ -14,7 +14,6 @@ const TWITCH_USER     = 'onlyflan_es';
 const STATE_FILE      = '/tmp/counter-state.json';
 // ─────────────────────────────────────────────────────────────
 
-// ── Estado persistente ────────────────────────────────────────
 function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
@@ -35,11 +34,11 @@ function saveState() {
   } catch(e) { console.warn('[State] Error guardando:', e.message); }
 }
 
-const contributors = {}; // { username: totalSeconds }
+const contributors = {};
 
-const initialState    = loadState();
-let currentRemaining  = initialState.remaining;
-let streamStartTime   = initialState.streamStartTime;
+const initialState   = loadState();
+let currentRemaining = initialState.remaining;
+let streamStartTime  = initialState.streamStartTime;
 
 setInterval(saveState, 30000);
 
@@ -51,7 +50,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 const overlays = new Set();
-const panels = new Set();
+const panels   = new Set();
 
 wss.on('connection', (ws, req) => {
   console.log('[+] Cliente conectado');
@@ -77,14 +76,15 @@ wss.on('connection', (ws, req) => {
       if (msg.remaining !== undefined) {
         currentRemaining = msg.remaining;
         saveState();
-        const data = JSON.stringify({ remaining: currentRemaining });
+        const top5 = Object.entries(contributors).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        const data = JSON.stringify({ remaining: currentRemaining, top5 });
         for (const client of panels) {
           if (client.readyState === 1) client.send(data);
         }
       }
-      // Registrar contribucion de usuario
       if (msg.username && msg.seconds) {
         contributors[msg.username] = (contributors[msg.username] || 0) + msg.seconds;
+        console.log('[contrib]', msg.username, '->', Math.floor(contributors[msg.username] / 60) + 'min');
       }
       return;
     }
@@ -98,7 +98,7 @@ wss.on('connection', (ws, req) => {
 
     if (msg.type === 'set_time')     { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
     if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
-    if (msg.type === 'mute') { broadcastOverlay({ type: 'mute', amount: msg.amount || 0 }); return; }
+    if (msg.type === 'mute')         { broadcastOverlay({ type: 'mute', amount: msg.amount || 0 }); return; }
     if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; saveState(); Object.keys(contributors).forEach(k => delete contributors[k]); }
 
     broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
@@ -150,10 +150,10 @@ function connectTwitch() {
 
   twitchClient.on('message', (channel, tags, message, self) => {
     if (self) return;
-    if (message.trim().toLowerCase() === '!top') {
-      const sorted = Object.entries(contributors)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
+    const msg2 = message.trim().toLowerCase();
+
+    if (msg2 === '!top') {
+      const sorted = Object.entries(contributors).sort((a, b) => b[1] - a[1]).slice(0, 5);
       if (sorted.length === 0) {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
       } else {
@@ -168,8 +168,6 @@ function connectTwitch() {
       }
       return;
     }
-
-    const msg2 = message.trim().toLowerCase();
 
     if (msg2 === '!mitiempo') {
       const username = tags.username;
@@ -195,7 +193,7 @@ function connectTwitch() {
       return;
     }
 
-    if (message.trim().toLowerCase() === '!extensible') {
+    if (msg2 === '!extensible') {
       const elapsed = streamStartTime ? Math.floor((Date.now() - streamStartTime) / 1000) : null;
       const response = currentRemaining > 0
         ? (elapsed !== null ? 'Transcurrido: ' + fmtTime(elapsed) + ' | ' : '') + 'Tiempo restante: ' + fmtTime(currentRemaining)
@@ -260,7 +258,10 @@ discordClient.on('messageCreate', async (message) => {
     case 'raid':       broadcastOverlay({ type: 'raid' });      reply = 'Raid anadido'; break;
     case 'donation':   broadcastOverlay({ type: 'donation' });  reply = 'Donacion anadida'; break;
     case 'toggle':     broadcastOverlay({ type: 'toggle' });    reply = 'Pausa/reanudar'; break;
-    case 'reset':      currentRemaining = 0; streamStartTime = null; saveState(); broadcastOverlay({ type: 'reset' }); reply = 'Reiniciado'; break;
+    case 'reset':
+      currentRemaining = 0; streamStartTime = null; saveState();
+      Object.keys(contributors).forEach(k => delete contributors[k]);
+      broadcastOverlay({ type: 'reset' }); reply = 'Reiniciado'; break;
     case 'set_time':
       if (!arg) { message.reply('Uso: !settimer 180 (minutos)'); return; }
       currentRemaining = Math.round(arg * 60); saveState();
