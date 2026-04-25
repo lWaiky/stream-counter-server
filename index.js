@@ -173,7 +173,7 @@ wss.on('connection', (ws) => {
       return;
     }
     if (msg.role === 'overlay2') { overlays2.add(ws); console.log('[overlay2] Registrado'); return; }
-    if (msg.role === 'panel')    { panels.add(ws);    ws.send(JSON.stringify({ remaining: currentRemaining })); console.log('[panel] Registrado'); return; }
+    if (msg.role === 'panel')    { panels.add(ws);    ws.send(JSON.stringify({ remaining: currentRemaining, paused: serverPaused })); console.log('[panel] Registrado'); return; }
     if (msg.role === 'tts')      { ttsClients.add(ws); console.log('[TTS] Registrado'); return; }
 
     // Eventos de StreamElements (vienen del overlay)
@@ -252,7 +252,7 @@ setInterval(() => {
   if (!serverPaused && currentRemaining > 0) currentRemaining--;
   // Mandar tiempo a panels cada segundo
   const top5 = Object.entries(contributors).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  const data = JSON.stringify({ remaining: currentRemaining, top5 });
+  const data = JSON.stringify({ remaining: currentRemaining, paused: serverPaused, top5 });
   for (const c of panels) if (c.readyState === 1) c.send(data);
   // Sincronizar overlay cada 30 segundos para corregir desvíos
   if (currentRemaining % 30 === 0) {
