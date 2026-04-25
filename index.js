@@ -49,8 +49,9 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocketServer({ server });
-const overlays = new Set();
-const panels   = new Set();
+const overlays  = new Set();
+const overlays2 = new Set();
+const panels    = new Set();
 const ttsClients = new Set();
 
 wss.on('connection', (ws, req) => {
@@ -63,6 +64,12 @@ wss.on('connection', (ws, req) => {
     if (msg.role === 'overlay') {
       overlays.add(ws);
       console.log('[overlay] Overlay registrado, total:', overlays.size);
+      return;
+    }
+
+    if (msg.role === 'overlay2') {
+      overlays2.add(ws);
+      console.log('[overlay2] Overlay2 registrado');
       return;
     }
 
@@ -94,11 +101,11 @@ wss.on('connection', (ws, req) => {
         console.log('[contrib]', msg.username, '->', Math.floor(contributors[msg.username] / 60) + 'min');
         // Confeti si el evento sumó más de 120 minutos
         if (msg.seconds >= 120 * 60) {
-          broadcastOverlay({ type: 'confetti' });
+          broadcastOverlay2({ type: 'confetti' });
         }
         // Mandar alerta al overlay2
         if (msg.eventType) {
-          broadcastOverlay({
+          broadcastOverlay2({
             type: msg.eventType,
             username: msg.username,
             seconds: msg.seconds,
@@ -127,6 +134,7 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     overlays.delete(ws);
+    overlays2.delete(ws);
     panels.delete(ws);
     ttsClients.delete(ws);
     console.log('[-] Cliente desconectado');
@@ -138,11 +146,17 @@ function broadcastOverlay(payload) {
   for (const client of overlays) {
     if (client.readyState === 1) client.send(data);
   }
-  // TTS clientes también reciben el mensaje
   if (payload.type === 'tts') {
     for (const client of ttsClients) {
       if (client.readyState === 1) client.send(data);
     }
+  }
+}
+
+function broadcastOverlay2(payload) {
+  const data = JSON.stringify(payload);
+  for (const client of overlays2) {
+    if (client.readyState === 1) client.send(data);
   }
 }
 
@@ -196,9 +210,9 @@ function connectTwitch() {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
       } else {
         const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
-        // Mostrar podio en overlay
+        // Mostrar podio en overlay2
         const top5data = sorted.map(([u, s]) => [u, s]);
-        broadcastOverlay({ type: 'top', top5: top5data });
+        broadcastOverlay2({ type: 'top', top5: top5data });
         twitchClient.say(channel, '🏆 Top contribuidores del stream:');
         sorted.forEach(([user, secs], i) => {
           setTimeout(() => {
