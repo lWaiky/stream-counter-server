@@ -35,6 +35,7 @@ function saveState() {
 }
 
 const contributors = {};
+const recentAlerts = new Map(); // anti-duplicados de alertas
 
 const initialState   = loadState();
 let currentRemaining = initialState.remaining;
@@ -103,15 +104,19 @@ wss.on('connection', (ws, req) => {
         if (msg.seconds >= 120 * 60) {
           broadcastOverlay2({ type: 'confetti' });
         }
-        // Mandar alerta al overlay2
-        if (msg.eventType) {
-          broadcastOverlay2({
-            type: msg.eventType,
-            username: msg.username,
-            seconds: msg.seconds,
-            amount: msg.eventAmount || 0,
-            viewers: msg.viewers || 0,
-          });
+        // Mandar alerta al overlay2 - solo una vez por evento
+        if (msg.eventType && msg.eventId) {
+          if (!recentAlerts.has(msg.eventId)) {
+            recentAlerts.set(msg.eventId, Date.now());
+            setTimeout(() => recentAlerts.delete(msg.eventId), 10000);
+            broadcastOverlay2({
+              type: msg.eventType,
+              username: msg.username,
+              seconds: msg.seconds,
+              amount: msg.eventAmount || 0,
+              viewers: msg.viewers || 0,
+            });
+          }
         }
       }
       return;
