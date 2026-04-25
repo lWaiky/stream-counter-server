@@ -65,6 +65,8 @@ wss.on('connection', (ws, req) => {
     if (msg.role === 'overlay') {
       overlays.add(ws);
       console.log('[overlay] Overlay registrado, total:', overlays.size);
+      // Mandar tiempo actual al overlay al conectarse
+      ws.send(JSON.stringify({ type: 'set_time', amount: currentRemaining / 60 }));
       return;
     }
 
