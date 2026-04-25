@@ -85,6 +85,10 @@ wss.on('connection', (ws, req) => {
       if (msg.username && msg.seconds) {
         contributors[msg.username] = (contributors[msg.username] || 0) + msg.seconds;
         console.log('[contrib]', msg.username, '->', Math.floor(contributors[msg.username] / 60) + 'min');
+        // Confeti si el evento sumó más de 120 minutos
+        if (msg.seconds >= 120 * 60) {
+          broadcastOverlay({ type: 'confetti' });
+        }
       }
       return;
     }
@@ -168,6 +172,9 @@ function connectTwitch() {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
       } else {
         const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
+        // Mostrar podio en overlay
+        const top5data = sorted.map(([u, s]) => [u, s]);
+        broadcastOverlay({ type: 'top', top5: top5data });
         twitchClient.say(channel, '🏆 Top contribuidores del stream:');
         sorted.forEach(([user, secs], i) => {
           setTimeout(() => {
