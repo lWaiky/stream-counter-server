@@ -132,6 +132,9 @@ function fmtTime(secs) {
   return s + 's';
 }
 
+let lastTopTime = 0;
+const TOP_COOLDOWN = 60 * 1000;
+
 function connectTwitch() {
   if (!TWITCH_TOKEN) { console.warn('[Twitch] No hay TWITCH_TOKEN'); return; }
 
@@ -153,6 +156,13 @@ function connectTwitch() {
     const msg2 = message.trim().toLowerCase();
 
     if (msg2 === '!top') {
+      const now = Date.now();
+      if (now - lastTopTime < TOP_COOLDOWN) {
+        const secsLeft = Math.ceil((TOP_COOLDOWN - (now - lastTopTime)) / 1000);
+        twitchClient.say(channel, '⏳ !top disponible en ' + secsLeft + 's');
+        return;
+      }
+      lastTopTime = now;
       const sorted = Object.entries(contributors).sort((a, b) => b[1] - a[1]).slice(0, 5);
       if (sorted.length === 0) {
         twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
