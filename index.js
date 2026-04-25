@@ -218,6 +218,10 @@ wss.on('connection', (ws) => {
         saveState();
         console.log('[Stream] Inicio registrado');
         break;
+      case 'reset_contributors':
+        Object.keys(contributors).forEach(k => delete contributors[k]);
+        console.log('[Contributors] Reseteados');
+        break;
       case 'mute':
         broadcastOverlay({ type: 'mute', amount: msg.amount || 0 });
         break;
