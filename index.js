@@ -210,6 +210,21 @@ function connectTwitch() {
       return;
     }
 
+    if (msg2.startsWith('!tts ')) {
+      const isMod = tags.mod || tags['user-type'] === 'mod' || tags.badges?.broadcaster;
+      const isSub = tags.subscriber || tags.badges?.subscriber || tags.badges?.founder;
+      if (!isMod && !isSub) {
+        twitchClient.say(channel, '@' + tags.username + ' el comando !tts es solo para suscriptores y moderadores.');
+        return;
+      }
+      const ttsMsg = message.trim().slice(5).trim();
+      if (!ttsMsg) return;
+      const fullMsg = tags.username + ' dice: ' + ttsMsg;
+      broadcastOverlay({ type: 'tts', text: fullMsg });
+      console.log('[TTS]', fullMsg);
+      return;
+    }
+
     if (msg2 === '!extensible') {
       const elapsed = streamStartTime ? Math.floor((Date.now() - streamStartTime) / 1000) : null;
       const response = currentRemaining > 0
