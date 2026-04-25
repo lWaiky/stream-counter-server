@@ -137,7 +137,8 @@ function processEvent(type, amount, username) {
 
   // Mandar evento al panel para el historial
   const mins = Math.round(secs / 60);
-  const panelData = JSON.stringify({ remaining: currentRemaining, paused: serverPaused, eventLog: { name: label, mins, label: (secs >= 0 ? '+' : '') + mins + ' min' } });
+  const logId = Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+  const panelData = JSON.stringify({ remaining: currentRemaining, paused: serverPaused, eventLog: { id: logId, name: label, mins, label: (secs >= 0 ? '+' : '') + mins + ' min' } });
   for (const c of panels) if (c.readyState === 1) c.send(panelData);
 
   // Confeti si suma más de 120 min
