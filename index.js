@@ -135,6 +135,11 @@ function processEvent(type, amount, username) {
   broadcastOverlay({ type, amount, username, secs, label });
   broadcastAll({ type: 'sync_time', remaining: currentRemaining });
 
+  // Mandar evento al panel para el historial
+  const mins = Math.round(secs / 60);
+  const panelData = JSON.stringify({ remaining: currentRemaining, paused: serverPaused, eventLog: { name: label, mins, label: (secs >= 0 ? '+' : '') + mins + ' min' } });
+  for (const c of panels) if (c.readyState === 1) c.send(panelData);
+
   // Confeti si suma más de 120 min
   if (secs >= 120 * 60) broadcastOverlay2({ type: 'confetti' });
 
