@@ -96,6 +96,16 @@ wss.on('connection', (ws, req) => {
         if (msg.seconds >= 120 * 60) {
           broadcastOverlay({ type: 'confetti' });
         }
+        // Mandar alerta al overlay2
+        if (msg.eventType) {
+          broadcastOverlay({
+            type: msg.eventType,
+            username: msg.username,
+            seconds: msg.seconds,
+            amount: msg.eventAmount || 0,
+            viewers: msg.viewers || 0,
+          });
+        }
       }
       return;
     }
