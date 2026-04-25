@@ -1,259 +1,356 @@
-const http = require('http');
-const fs   = require('fs');
-const { WebSocketServer } = require('ws');
-const { Client, GatewayIntentBits } = require('discord.js');
-const tmi  = require('tmi.js');
-
 // ─── CONFIGURACIÓN ───────────────────────────────────────────
-const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
-const SECRET          = process.env.SECRET || 'CAMBIA_ESTO_POR_UNA_CLAVE_SECRETA';
-const PORT            = process.env.PORT || 8080;
-const ALLOWED_CHANNEL = '';
-const TWITCH_TOKEN    = process.env.TWITCH_TOKEN;
-const TWITCH_USER     = 'onlyflan_es';
-const STATE_FILE      = '/tmp/counter-state.json';
-// ─────────────────────────────────────────────────────────────
-
-// ── Estado persistente ────────────────────────────────────────
-function loadState() {
-  try {
-    if (fs.existsSync(STATE_FILE)) {
-      const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      console.log('[State] Estado cargado:', data);
-      return data;
-    }
-  } catch(e) { console.warn('[State] Error cargando:', e.message); }
-  return { remaining: 4 * 3600, streamStartTime: null };
-}
-
-function saveState() {
-  try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({
-      remaining: currentRemaining,
-      streamStartTime: streamStartTime,
-    }));
-  } catch(e) { console.warn('[State] Error guardando:', e.message); }
-}
-
-const contributors = {}; // { username: totalSeconds }
-
-const initialState    = loadState();
-let currentRemaining  = initialState.remaining;
-let streamStartTime   = initialState.streamStartTime;
-
-setInterval(saveState, 30000);
-
-// ── Servidor HTTP + WebSocket ─────────────────────────────────
-const server = http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end('Stream Counter Server OK');
-});
-
-const wss = new WebSocketServer({ server });
-const overlays = new Set();
-const panels = new Set();
-
-wss.on('connection', (ws, req) => {
-  console.log('[+] Cliente conectado');
-
-  ws.on('message', (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch { return; }
-
-    if (msg.role === 'overlay') {
-      overlays.add(ws);
-      console.log('[overlay] Overlay registrado, total:', overlays.size);
-      return;
-    }
-
-    if (msg.role === 'panel') {
-      panels.add(ws);
-      console.log('[panel] Panel registrado');
-      ws.send(JSON.stringify({ remaining: currentRemaining }));
-      return;
-    }
-
-    if (msg.role === 'sync') {
-      if (msg.remaining !== undefined) {
-        currentRemaining = msg.remaining;
-        saveState();
-        const data = JSON.stringify({ remaining: currentRemaining });
-        for (const client of panels) {
-          if (client.readyState === 1) client.send(data);
-        }
-      }
-      // Registrar contribucion de usuario
-      if (msg.username && msg.seconds) {
-        contributors[msg.username] = (contributors[msg.username] || 0) + msg.seconds;
-      }
-      return;
-    }
-
-    if (msg.secret !== SECRET) {
-      console.warn('[-] Clave incorrecta');
-      return;
-    }
-
-    console.log('[->] Evento:', msg.type, msg.amount || '');
-
-    if (msg.type === 'set_time')     { currentRemaining = Math.round((msg.amount || 0) * 60); saveState(); }
-    if (msg.type === 'start_stream') { streamStartTime = Date.now(); saveState(); console.log('[Stream] Inicio registrado'); }
-    if (msg.type === 'reset')        { currentRemaining = 0; streamStartTime = null; saveState(); Object.keys(contributors).forEach(k => delete contributors[k]); }
-
-    broadcastOverlay({ type: msg.type, amount: msg.amount || 0 });
-  });
-
-  ws.on('close', () => {
-    overlays.delete(ws);
-    panels.delete(ws);
-    console.log('[-] Cliente desconectado');
-  });
-});
-
-function broadcastOverlay(payload) {
-  const data = JSON.stringify(payload);
-  for (const client of overlays) {
-    if (client.readyState === 1) client.send(data);
-  }
-}
-
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('[OK] Servidor escuchando en puerto', PORT);
-});
-
-// ── Bot de Twitch ─────────────────────────────────────────────
-function fmtTime(secs) {
-  const h = Math.floor(secs / 3600);
-  const m = Math.floor((secs % 3600) / 60);
-  const s = secs % 60;
-  if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
-  if (m > 0) return m + 'm ' + s + 's';
-  return s + 's';
-}
-
-function connectTwitch() {
-  if (!TWITCH_TOKEN) { console.warn('[Twitch] No hay TWITCH_TOKEN'); return; }
-
-  const twitchClient = new tmi.Client({
-    identity: { username: TWITCH_USER, password: TWITCH_TOKEN },
-    channels: [TWITCH_USER],
-    options: { debug: false },
-  });
-
-  twitchClient.connect().then(() => {
-    console.log('[Twitch] Conectado al chat de', TWITCH_USER);
-  }).catch(err => {
-    console.error('[Twitch] Error:', err);
-    setTimeout(connectTwitch, 10000);
-  });
-
-  twitchClient.on('message', (channel, tags, message, self) => {
-    if (self) return;
-    if (message.trim().toLowerCase() === '!top') {
-      const sorted = Object.entries(contributors)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5);
-      if (sorted.length === 0) {
-        twitchClient.say(channel, 'Aun no hay contribuidores en este stream!');
-      } else {
-        const medals = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
-        twitchClient.say(channel, '🏆 Top contribuidores del stream:');
-        sorted.forEach(([user, secs], i) => {
-          setTimeout(() => {
-            const m = Math.floor(secs / 60);
-            twitchClient.say(channel, medals[i] + ' ' + user + ' — ' + m + ' min');
-          }, i * 600);
-        });
-      }
-      return;
-    }
-
-    if (message.trim().toLowerCase() === '!extensible') {
-      const elapsed = streamStartTime ? Math.floor((Date.now() - streamStartTime) / 1000) : null;
-      const response = currentRemaining > 0
-        ? (elapsed !== null ? 'Transcurrido: ' + fmtTime(elapsed) + ' | ' : '') + 'Tiempo restante: ' + fmtTime(currentRemaining)
-        : 'El contador esta en 0!';
-      twitchClient.say(channel, response);
-      console.log('[Twitch] !extensible ->', response);
-    }
-  });
-
-  twitchClient.on('disconnected', (reason) => {
-    console.warn('[Twitch] Desconectado:', reason);
-    setTimeout(connectTwitch, 10000);
-  });
-}
-
-connectTwitch();
-
-// ── Bot de Discord ────────────────────────────────────────────
-const COMMANDS = {
-  '!seguidor':  { type: 'follower' },
-  '!sub':       { type: 'sub' },
-  '!resub':     { type: 'resub' },
-  '!raid':      { type: 'raid' },
-  '!donacion':  { type: 'donation' },
-  '!bits':      { type: 'bits' },
-  '!sumar':     { type: 'custom' },
-  '!quitar':    { type: 'custom_neg' },
-  '!pausar':    { type: 'toggle' },
-  '!reiniciar': { type: 'reset' },
-  '!settimer':  { type: 'set_time' },
+const CONFIG = {
+  follower:    10,
+  sub:         60,
+  resub:       60,
+  raid:        15,
+  donation:    30,
+  bitsPerUnit: 100,
+  bitsMinutes: 30,
 };
 
-const discordClient = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-});
+const WS_URL = 'wss://stream-counter-server-production.up.railway.app';
+const ALERT_AT = 30 * 60;
+// ─────────────────────────────────────────────────────────────
 
-discordClient.on('clientReady', () => {
-  console.log('[OK] Bot Discord conectado como', discordClient.user.tag);
-});
+let remaining = 0;
+let maxTime   = 0;
+let running   = false;
+let paused    = false;
+let timerInterval = null;
+let socket = null;
+let alertShown = false;
+let endTriggered = false;
 
-discordClient.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (ALLOWED_CHANNEL && message.channelId !== ALLOWED_CHANNEL) return;
+// Récord
+let recordSecs = 0;
+let recordLabel = '';
 
-  const parts = message.content.trim().split(/\s+/);
-  const cmd   = parts[0].toLowerCase();
-  const arg   = parseFloat(parts[1]) || 0;
+// ── Sonido coin ───────────────────────────────────────────────
+function playCoin() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    function beep(freq, start, dur, vol) {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'square';
+      o.frequency.setValueAtTime(freq, t + start);
+      g.gain.setValueAtTime(vol, t + start);
+      g.gain.exponentialRampToValueAtTime(0.001, t + start + dur);
+      o.start(t + start);
+      o.stop(t + start + dur + 0.01);
+    }
+    beep(988,  0.00, 0.08, 0.3);
+    beep(1319, 0.08, 0.15, 0.3);
+  } catch(e) {}
+}
 
-  if (!COMMANDS[cmd]) return;
+// ── Estilos ───────────────────────────────────────────────────
+if (!document.getElementById('float-style')) {
+  const s = document.createElement('style');
+  s.id = 'float-style';
+  s.textContent = `
+    @keyframes floatUp {
+      0%   { opacity: 1; transform: translateX(-50%) translateY(0); }
+      100% { opacity: 0; transform: translateX(-50%) translateY(-60px); }
+    }
+    @keyframes borderFlash {
+      0%   { box-shadow: 0 0 0 0 rgba(74,222,170,0.9), 0 4px 24px rgba(0,0,0,0.5); }
+      40%  { box-shadow: 0 0 0 10px rgba(74,222,170,0.2), 0 4px 24px rgba(0,0,0,0.5); }
+      100% { box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
+    }
+    @keyframes borderFlashRed {
+      0%   { box-shadow: 0 0 0 0 rgba(255,85,85,0.9), 0 4px 24px rgba(0,0,0,0.5); }
+      40%  { box-shadow: 0 0 0 10px rgba(255,85,85,0.2), 0 4px 24px rgba(0,0,0,0.5); }
+      100% { box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
+    }
+    @keyframes alertPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255,85,85,0.8), 0 4px 24px rgba(0,0,0,0.5); }
+      50% { box-shadow: 0 0 0 12px rgba(255,85,85,0.2), 0 4px 24px rgba(0,0,0,0.5); }
+    }
+    @keyframes endPulse {
+      0%, 100% { opacity: 1; color: #ff4f4f; }
+      50% { opacity: 0.2; color: #ff0000; }
+    }
+    @keyframes endFadeOut {
+      0%   { opacity: 1; transform: scale(1); }
+      70%  { opacity: 1; transform: scale(1.05); }
+      100% { opacity: 0; transform: scale(0.9); }
+    }
+    @keyframes endTextIn {
+      0%   { opacity: 0; transform: translateX(-50%) scale(0.8); }
+      50%  { opacity: 1; transform: translateX(-50%) scale(1.05); }
+      80%  { opacity: 1; transform: translateX(-50%) scale(1); }
+      100% { opacity: 0; transform: translateX(-50%) scale(1); }
+    }
+  `;
+  document.head.appendChild(s);
+}
 
-  const { type } = COMMANDS[cmd];
-  let reply = '';
+// ── Animación flotante ────────────────────────────────────────
+function showFloating(text, color) {
+  const el = document.createElement('div');
+  el.textContent = text;
+  el.style.cssText = `
+    position: absolute; top: -10px; left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Rajdhani', monospace; font-size: 28px; font-weight: 700;
+    color: ${color}; text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+    pointer-events: none; white-space: nowrap;
+    animation: floatUp 1.4s ease-out forwards; z-index: 99;
+  `;
+  document.getElementById('counter-inner').appendChild(el);
+  setTimeout(() => el.remove(), 1500);
+}
 
-  switch (type) {
-    case 'follower':   broadcastOverlay({ type: 'follower' });  reply = 'Seguidor anadido'; break;
-    case 'sub':        broadcastOverlay({ type: 'sub' });       reply = 'Sub anadido'; break;
-    case 'resub':      broadcastOverlay({ type: 'resub' });     reply = 'Resub anadido'; break;
-    case 'raid':       broadcastOverlay({ type: 'raid' });      reply = 'Raid anadido'; break;
-    case 'donation':   broadcastOverlay({ type: 'donation' });  reply = 'Donacion anadida'; break;
-    case 'toggle':     broadcastOverlay({ type: 'toggle' });    reply = 'Pausa/reanudar'; break;
-    case 'reset':      currentRemaining = 0; streamStartTime = null; saveState(); broadcastOverlay({ type: 'reset' }); reply = 'Reiniciado'; break;
-    case 'set_time':
-      if (!arg) { message.reply('Uso: !settimer 180 (minutos)'); return; }
-      currentRemaining = Math.round(arg * 60); saveState();
-      broadcastOverlay({ type: 'set_time', amount: arg });
-      reply = 'Contador ajustado a ' + arg + ' min'; break;
-    case 'bits':
-      if (!arg || arg <= 0) { message.reply('Uso: !bits 500'); return; }
-      broadcastOverlay({ type: 'bits', amount: arg });
-      reply = arg + ' bits anadidos'; break;
-    case 'custom':
-      if (!arg || arg <= 0) { message.reply('Uso: !sumar 3'); return; }
-      broadcastOverlay({ type: 'custom', amount: arg });
-      reply = '+' + arg + ' min anadidos'; break;
-    case 'custom_neg':
-      if (!arg || arg <= 0) { message.reply('Uso: !quitar 3'); return; }
-      broadcastOverlay({ type: 'custom', amount: -arg });
-      reply = '-' + arg + ' min quitados'; break;
+function flashBorder(color) {
+  const inner = document.getElementById('counter-inner');
+  inner.style.animation = 'none';
+  void inner.offsetWidth;
+  inner.style.animation = color === 'green'
+    ? 'borderFlash 0.6s ease-out forwards'
+    : 'borderFlashRed 0.6s ease-out forwards';
+  setTimeout(() => { inner.style.animation = ''; }, 700);
+}
+
+// ── Animación fin de stream ───────────────────────────────────
+function triggerEndAnimation() {
+  if (endTriggered) return;
+  endTriggered = true;
+
+  const inner = document.getElementById('counter-inner');
+  const timeEl = document.getElementById('counter-time');
+
+  // Parpadeo rojo durante 3 segundos
+  timeEl.style.animation = 'endPulse 0.4s ease-in-out infinite';
+  inner.style.animation = 'alertPulse 0.4s ease-in-out infinite';
+
+  setTimeout(() => {
+    // Fade out del contador
+    inner.style.animation = 'endFadeOut 1.5s ease-out forwards';
+
+    // Texto "¡Stream terminado!"
+    const endText = document.createElement('div');
+    endText.textContent = '¡Stream terminado!';
+    endText.style.cssText = `
+      position: absolute; top: 50%; left: 50%;
+      transform: translateX(-50%) translateY(-50%);
+      font-family: 'Rajdhani', monospace; font-size: 32px; font-weight: 700;
+      color: #ff4f4f; text-shadow: 0 2px 12px rgba(0,0,0,0.9);
+      pointer-events: none; white-space: nowrap;
+      animation: endTextIn 3s ease-out forwards; z-index: 999;
+    `;
+    document.getElementById('counter-widget').appendChild(endText);
+    setTimeout(() => endText.remove(), 3000);
+  }, 3000);
+}
+
+// ── Color según tiempo ────────────────────────────────────────
+function getTimeColor(secs) {
+  if (secs <= 10 * 60) return '#ff4f4f';
+  if (secs <= 30 * 60) return '#f9a825';
+  return '#ffffff';
+}
+
+// ── Alerta 30 minutos ─────────────────────────────────────────
+function checkAlert(secs) {
+  const inner = document.getElementById('counter-inner');
+  if (secs <= ALERT_AT && secs > 0 && !alertShown) {
+    alertShown = true;
+    inner.style.animation = 'alertPulse 1.5s ease-in-out infinite';
+    const lastEl = document.getElementById('counter-last');
+    lastEl.textContent = '⚠️ ¡Quedan 30 minutos!';
+    lastEl.style.opacity = '1';
+    lastEl.style.color = '#f9a825';
+    setTimeout(() => { lastEl.style.opacity = '0'; lastEl.style.color = ''; }, 5000);
+  }
+  if (secs > ALERT_AT) {
+    alertShown = false;
+    if (!endTriggered) inner.style.animation = '';
+  }
+  if (secs === 0 && running) triggerEndAnimation();
+}
+
+// ── Timer ─────────────────────────────────────────────────────
+function pad(n) { return String(Math.floor(Math.abs(n))).padStart(2, '0'); }
+function fmt(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${pad(h)}:${pad(m)}:${pad(s % 60)}`;
+}
+
+function updateDisplay() {
+  const el  = document.getElementById('counter-time');
+  const bar = document.getElementById('counter-bar');
+  el.textContent = fmt(remaining);
+  const color = getTimeColor(remaining);
+  if (!endTriggered) el.style.color = color;
+  el.className = remaining <= 60 && remaining > 0 ? 'low' : 'ok';
+  if (maxTime > 0) {
+    bar.style.width = Math.min(100, (remaining / maxTime) * 100) + '%';
+    bar.style.background = color;
+  }
+  checkAlert(remaining);
+}
+
+function syncToServer(username, seconds) {
+  if (socket && socket.readyState === 1) {
+    const payload = { role: 'sync', remaining: remaining };
+    if (username && seconds) { payload.username = username; payload.seconds = seconds; }
+    socket.send(JSON.stringify(payload));
+  }
+}
+
+function addSeconds(secs, label, username) {
+  remaining = Math.max(0, remaining + secs);
+  if (remaining > maxTime) maxTime = remaining;
+
+  // Récord
+  if (secs > recordSecs) {
+    recordSecs = secs;
+    recordLabel = label;
+    const lastEl = document.getElementById('counter-last');
+    lastEl.textContent = '🏆 Récord: ' + label;
+    lastEl.style.opacity = '1';
+    setTimeout(() => { lastEl.style.opacity = '0'; }, 5000);
   }
 
-  if (reply) message.reply(reply);
+  updateDisplay();
+  syncToServer(username, secs > 0 ? secs : 0);
+
+  const mins = Math.abs(secs / 60);
+  const minsStr = mins % 1 === 0 ? mins : mins.toFixed(1);
+  if (secs >= 0) {
+    playCoin();
+    showFloating('+' + minsStr + ' min', '#4adeaa');
+    flashBorder('green');
+  } else {
+    showFloating('−' + minsStr + ' min', '#ff6b6b');
+    flashBorder('red');
+  }
+
+  if (secs < recordSecs) {
+    const lastEl = document.getElementById('counter-last');
+    lastEl.textContent = label;
+    lastEl.style.opacity = '1';
+    setTimeout(() => { lastEl.style.opacity = '0'; }, 4000);
+  }
+}
+
+function startTimer() {
+  if (timerInterval) return;
+  running = true;
+  timerInterval = setInterval(() => {
+    if (!paused && remaining > 0) { remaining--; updateDisplay(); }
+  }, 1000);
+}
+
+setInterval(() => syncToServer(), 1000);
+
+function handleEvent(type, amount, username) {
+  const user = username || '';
+  startTimer();
+  switch (type) {
+    case 'follower':
+      addSeconds(Math.round(CONFIG.follower * 60), '👤 ' + (user || 'Seguidor') + ' te siguió', user); break;
+    case 'sub':
+      addSeconds(Math.round(CONFIG.sub * 60), '⭐ ' + (user || 'Sub') + ' se suscribió', user); break;
+    case 'resub':
+      addSeconds(Math.round(CONFIG.resub * 60), '🔄 ' + (user || 'Resub') + ' renovó', user); break;
+    case 'raid': {
+      const raidViewers = amount || 0;
+      if (raidViewers < 3) {
+        const lastEl = document.getElementById('counter-last');
+        lastEl.textContent = '⚔️ Raid ignorado (' + raidViewers + ' personas)';
+        lastEl.style.opacity = '1';
+        setTimeout(() => { lastEl.style.opacity = '0'; }, 3000);
+        break;
+      }
+      addSeconds(Math.round(raidViewers * 3 * 60), '⚔️ ' + (user || 'Raid') + ' trajo ' + raidViewers + ' viewers', user);
+      break;
+    }
+    case 'donation': {
+      const euros = amount || 1;
+      addSeconds(Math.round(euros * CONFIG.donation * 60), '💜 ' + (user || 'Donación') + ' donó ' + euros + '€', user);
+      break;
+    }
+    case 'bits': {
+      const mins = (amount / CONFIG.bitsPerUnit) * CONFIG.bitsMinutes;
+      addSeconds(Math.round(mins * 60), '💎 ' + (user || 'Bits') + ' dio ' + amount + ' bits', user);
+      break;
+    }
+    case 'custom':
+      addSeconds(Math.round(amount * 60), amount >= 0 ? '⏱️ +Tiempo' : '⏱️ −Tiempo'); break;
+    case 'set_time':
+      remaining = Math.round(amount * 60); maxTime = remaining;
+      endTriggered = false; recordSecs = 0; recordLabel = '';
+      document.getElementById('counter-inner').style.animation = '';
+      document.getElementById('counter-time').style.animation = '';
+      updateDisplay(); syncToServer();
+      const setEl = document.getElementById('counter-last');
+      setEl.textContent = '⏱️ Contador: ' + (amount / 60).toFixed(1) + 'h';
+      setEl.style.opacity = '1';
+      setTimeout(() => { setEl.style.opacity = '0'; }, 3000);
+      break;
+    case 'toggle':
+      paused = !paused;
+      const tEl = document.getElementById('counter-last');
+      tEl.textContent = paused ? '⏸ Pausado' : '▶ Reanudado';
+      tEl.style.opacity = '1';
+      setTimeout(() => { tEl.style.opacity = '0'; }, 3000);
+      break;
+    case 'reset':
+      remaining = 0; maxTime = 0; paused = false; alertShown = false;
+      endTriggered = false; recordSecs = 0; recordLabel = '';
+      document.getElementById('counter-inner').style.animation = '';
+      document.getElementById('counter-time').style.animation = '';
+      clearInterval(timerInterval); timerInterval = null; running = false;
+      updateDisplay(); syncToServer();
+      break;
+  }
+}
+
+window.addEventListener('onEventReceived', function(obj) {
+  const listener = obj.detail.listener;
+  const event    = obj.detail.event;
+  const username = event.name || event.sender || event.username || '';
+
+  switch (listener) {
+    case 'follower-latest':
+      handleEvent('follower', 0, username); break;
+    case 'subscriber-latest': {
+      const amount = parseInt(event.amount) || parseInt(event.gifted) || parseInt(event.count) || 1;
+      const isGift = event.gifted || event.isCommunityGift || amount > 1;
+      const isResub = event.type === 'resub';
+      const count = isGift ? amount : 1;
+      for (let i = 0; i < count; i++) handleEvent(isResub ? 'resub' : 'sub', 0, username);
+      break;
+    }
+    case 'raid-latest':   handleEvent('raid', parseInt(event.amount) || 0, username); break;
+    case 'tip-latest':    handleEvent('donation', parseFloat(event.amount) || 1, username); break;
+    case 'cheer-latest':  handleEvent('bits', parseInt(event.amount) || 0, username); break;
+  }
 });
 
-discordClient.login(DISCORD_TOKEN);
+function connectWS() {
+  try { socket = new WebSocket(WS_URL); } catch(e) { return; }
+  socket.addEventListener('open', () => {
+    socket.send(JSON.stringify({ role: 'overlay' }));
+  });
+  socket.addEventListener('message', (e) => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    if (msg.type) handleEvent(msg.type, msg.amount || 0);
+  });
+  socket.addEventListener('close', () => { socket = null; setTimeout(connectWS, 5000); });
+  socket.addEventListener('error', () => {});
+}
+
+window.addEventListener('onWidgetLoad', function() { updateDisplay(); });
+
+remaining = 4 * 3600;
+maxTime   = remaining;
+updateDisplay();
+startTimer();
+connectWS();
