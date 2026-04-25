@@ -76,7 +76,7 @@ function addTime(secs) {
   saveState();
 }
 
-function processEvent(type, amount, username) {
+function processEvent(type, amount, username, message) {
   let secs = 0;
   let label = '';
 
@@ -137,8 +137,7 @@ function processEvent(type, amount, username) {
 
   // Mandar evento al panel para el historial
   const mins = Math.round(secs / 60);
-  const logId = Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-  const panelData = JSON.stringify({ remaining: currentRemaining, paused: serverPaused, eventLog: { id: logId, name: label, mins, label: (secs >= 0 ? '+' : '') + mins + ' min' } });
+  const panelData = JSON.stringify({ remaining: currentRemaining, paused: serverPaused, eventLog: { name: label, mins, label: (secs >= 0 ? '+' : '') + mins + ' min' } });
   for (const c of panels) if (c.readyState === 1) c.send(panelData);
 
   // Confeti si suma más de 120 min
@@ -146,6 +145,12 @@ function processEvent(type, amount, username) {
 
   // Alerta en overlay2
   broadcastOverlay2({ type, username, seconds: secs, amount, viewers: amount });
+
+  // TTS para bits con mensaje
+  if (type === 'bits' && message && message.trim()) {
+    const ttsText = username ? `${username} dice: ${message.trim()}` : message.trim();
+    broadcastOverlay({ type: 'tts', text: ttsText });
+  }
 
   console.log('[Evento]', type, username || '', '+' + Math.floor(secs/60) + 'min', '=', Math.floor(currentRemaining/60) + 'min total');
 }
@@ -187,7 +192,7 @@ wss.on('connection', (ws) => {
       if (!msg.eventId || recentEvents.has(msg.eventId)) return;
       recentEvents.set(msg.eventId, Date.now());
       setTimeout(() => recentEvents.delete(msg.eventId), 15000);
-      processEvent(msg.type, msg.amount || 0, msg.username || '');
+      processEvent(msg.type, msg.amount || 0, msg.username || '', msg.message || '');
       return;
     }
 
