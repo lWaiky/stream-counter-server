@@ -120,6 +120,9 @@ function processEvent(type, amount, username, eventId) {
   broadcast(overlays, { type, secs, label, username, amount });
   // Sincronizar tiempo a todos
   broadcastTime();
+  // Mandar eventLog a panels para historial
+  const eventLogData = JSON.stringify({ type: 'time', remaining, paused, top5: Object.entries(contributors).sort((a,b)=>b[1]-a[1]).slice(0,5), eventLog: { name: label, mins: Math.round(secs/60), label: (secs>=0?'+':'')+Math.round(secs/60)+' min' } });
+  for (const c of panels) if (c.readyState === 1) c.send(eventLogData);
 }
 
 function buildLabel(type, amount, username, secs) {
