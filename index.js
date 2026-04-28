@@ -118,6 +118,7 @@ function processEvent(type, amount, username, eventId) {
 
   // Notificar overlay (visual)
   broadcast(overlays, { type, secs, label, username, amount });
+  broadcast(overlays2, { type, secs, label, username, amount });
   // Sincronizar tiempo a todos
   broadcastTime();
   // Mandar eventLog a panels para historial
@@ -133,7 +134,7 @@ function buildLabel(type, amount, username, secs) {
     case 'sub':       return `⭐ ${u} se suscribió +${m}min`;
     case 'resub':     return `🔄 ${u} renovó +${m}min`;
     case 'raid':      return `⚔️ ${u} trajo ${amount} viewers +${m}min`;
-    case 'donation':  return `💜 ${u} donó ${amount}€ +${m}min`;
+    case 'donation':  return `💜 ${u} donó ${amount}€ +${secs < 60 ? (secs/60).toFixed(1) : m}min`;
     case 'bits':      return `💎 ${u} dio ${amount} bits +${m}min`;
     case 'custom':    return secs >= 0 ? `⏱️ +${m}min manual` : `⏱️ ${m}min manual`;
     default:          return `+${m}min`;
@@ -164,6 +165,7 @@ wss.on('connection', (ws) => {
     if (msg.role === 'overlay2') {
       overlays2.add(ws);
       ws.send(JSON.stringify({ type: 'time', remaining, paused, top5: Object.entries(contributors).sort((a,b)=>b[1]-a[1]).slice(0,5) }));
+      console.log('[overlay2] Registrado, total:', overlays2.size);
       return;
     }
     if (msg.role === 'overlay') {
