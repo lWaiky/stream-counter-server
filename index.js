@@ -67,6 +67,7 @@ const server = http.createServer((req, res) => { res.writeHead(200); res.end('OK
 const wss    = new WebSocketServer({ server });
 
 const overlays   = new Set();
+const overlays2  = new Set();
 const panels     = new Set();
 const ttsClients = new Set();
 
@@ -140,8 +141,6 @@ function buildLabel(type, amount, username, secs) {
     default:          return `+${m}min`;
   }
 }
-
-const overlays2 = new Set();
 
 function broadcastTime() {
   const top5 = Object.entries(contributors).sort((a,b) => b[1]-a[1]).slice(0,5);
