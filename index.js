@@ -40,6 +40,9 @@ async function rSet(key, val) {
 let remaining     = 4 * 3600;
 let paused        = false;
 let streamStart   = null;
+let multiplier    = 1;
+let multiplierEnd = null;
+let multiplierInterval = null;
 const contributors = {};
 const seenEvents   = new Map(); // anti-duplicados
 
@@ -100,7 +103,7 @@ function processEvent(type, amount, username, eventId) {
     setTimeout(() => seenEvents.delete(eventId), 15000);
   }
 
-  const secs = calcSeconds(type, amount);
+  const secs = Math.round(calcSeconds(type, amount) * multiplier);
   if (secs === 0 && type !== 'custom') {
     console.log('[Raid] Ignorado <3 viewers o evento sin segundos');
     return;
@@ -146,6 +149,10 @@ function broadcastTime() {
   const top5 = Object.entries(contributors).sort((a,b) => b[1]-a[1]).slice(0,5);
   const data = JSON.stringify({ type: 'time', remaining, paused, top5 });
   for (const c of [...overlays, ...panels, ...overlays2]) if (c.readyState === 1) c.send(data);
+}
+
+function broadcastOverlay2(payload) {
+  broadcast(overlays2, payload);
 }
 
 function broadcast(set, payload) {
@@ -227,6 +234,34 @@ wss.on('connection', (ws) => {
           saveState(); broadcastTime();
         }
         break;
+      case 'set_multiplier': {
+        const mult = parseFloat(msg.multiplier) || 1;
+        const mins = parseInt(msg.mins) || 0;
+        multiplier = mult;
+        if (multiplierInterval) clearInterval(multiplierInterval);
+        if (mins > 0) {
+          multiplierEnd = Date.now() + mins * 60 * 1000;
+          let secsLeft = mins * 60;
+          // Notificar overlay del multiplicador
+          broadcastOverlay2({ type: 'multiplier', multiplier: mult, secsLeft });
+          multiplierInterval = setInterval(() => {
+            secsLeft--;
+            broadcastOverlay2({ type: 'multiplier', multiplier: mult, secsLeft });
+            if (secsLeft <= 0) {
+              clearInterval(multiplierInterval);
+              multiplier = 1;
+              multiplierEnd = null;
+              broadcastOverlay2({ type: 'multiplier', multiplier: 1, secsLeft: 0 });
+              console.log('[Multiplicador] Terminado');
+            }
+          }, 1000);
+          console.log('[Multiplicador] x' + mult + ' durante ' + mins + ' min');
+        } else {
+          multiplierEnd = null;
+          broadcastOverlay2({ type: 'multiplier', multiplier: mult, secsLeft: 0 });
+        }
+        break;
+      }
       case 'reset_contributors':
         Object.keys(contributors).forEach(k => delete contributors[k]);
         saveState(); broadcastTime();
