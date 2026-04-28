@@ -140,10 +140,12 @@ function buildLabel(type, amount, username, secs) {
   }
 }
 
+const overlays2 = new Set();
+
 function broadcastTime() {
   const top5 = Object.entries(contributors).sort((a,b) => b[1]-a[1]).slice(0,5);
   const data = JSON.stringify({ type: 'time', remaining, paused, top5 });
-  for (const c of [...overlays, ...panels]) if (c.readyState === 1) c.send(data);
+  for (const c of [...overlays, ...panels, ...overlays2]) if (c.readyState === 1) c.send(data);
 }
 
 function broadcast(set, payload) {
@@ -159,6 +161,11 @@ wss.on('connection', (ws) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
 
     // Identificación
+    if (msg.role === 'overlay2') {
+      overlays2.add(ws);
+      ws.send(JSON.stringify({ type: 'time', remaining, paused, top5: Object.entries(contributors).sort((a,b)=>b[1]-a[1]).slice(0,5) }));
+      return;
+    }
     if (msg.role === 'overlay') {
       overlays.add(ws);
       ws.send(JSON.stringify({ type: 'time', remaining, paused }));
@@ -227,7 +234,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    overlays.delete(ws); panels.delete(ws); ttsClients.delete(ws);
+    overlays.delete(ws); overlays2.delete(ws); panels.delete(ws); ttsClients.delete(ws);
     console.log('[-] Desconectado');
   });
 });
