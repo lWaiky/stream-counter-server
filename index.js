@@ -5,13 +5,13 @@ const tmi  = require('tmi.js');
 
 // ─── CONFIGURACIÓN DE TIEMPOS (fuente de verdad) ─────────────
 const CONFIG = {
-  follower:    10 * 60,   // segundos
-  sub:         60 * 60,
-  resub:       60 * 60,
-  donation:    30 * 60,   // por euro
+  follower:    5 * 60,   // segundos
+  sub:         40 * 60,
+  resub:       40 * 60,
+  donation:    20 * 60,   // por euro
   bitsPerUnit: 100,
-  bitsSeconds: 30 * 60,   // por cada 100 bits
-  raidPerViewer: 3 * 60,  // por viewer, mínimo 3 viewers
+  bitsSeconds: 20 * 60,   // por cada 100 bits
+  raidPerViewer: 2 * 60,  // por viewer, mínimo 3 viewers
 };
 
 // ─── VARIABLES DE ENTORNO ─────────────────────────────────────
