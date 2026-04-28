@@ -5,13 +5,13 @@ const tmi  = require('tmi.js');
 
 // ─── CONFIGURACIÓN DE TIEMPOS (fuente de verdad) ─────────────
 const CONFIG = {
-  follower:    5 * 60,   // segundos
-  sub:         40 * 60,
-  resub:       40 * 60,
-  donation:    20 * 60,   // por euro
+  follower:    10 * 60,   // segundos
+  sub:         60 * 60,
+  resub:       60 * 60,
+  donation:    30 * 60,   // por euro
   bitsPerUnit: 100,
-  bitsSeconds: 20 * 60,   // por cada 100 bits
-  raidPerViewer: 2 * 60,  // por viewer, mínimo 3 viewers
+  bitsSeconds: 30 * 60,   // por cada 100 bits
+  raidPerViewer: 3 * 60,  // por viewer, mínimo 3 viewers
 };
 
 // ─── VARIABLES DE ENTORNO ─────────────────────────────────────
@@ -76,7 +76,7 @@ function addTime(secs) {
   saveState();
 }
 
-function processEvent(type, amount, username, message) {
+function processEvent(type, amount, username) {
   let secs = 0;
   let label = '';
 
@@ -146,12 +146,6 @@ function processEvent(type, amount, username, message) {
   // Alerta en overlay2
   broadcastOverlay2({ type, username, seconds: secs, amount, viewers: amount });
 
-  // TTS para bits con mensaje
-  if (type === 'bits' && message && message.trim()) {
-    const ttsText = username ? `${username} dice: ${message.trim()}` : message.trim();
-    broadcastOverlay({ type: 'tts', text: ttsText });
-  }
-
   console.log('[Evento]', type, username || '', '+' + Math.floor(secs/60) + 'min', '=', Math.floor(currentRemaining/60) + 'min total');
 }
 
@@ -192,7 +186,7 @@ wss.on('connection', (ws) => {
       if (!msg.eventId || recentEvents.has(msg.eventId)) return;
       recentEvents.set(msg.eventId, Date.now());
       setTimeout(() => recentEvents.delete(msg.eventId), 15000);
-      processEvent(msg.type, msg.amount || 0, msg.username || '', msg.message || '');
+      processEvent(msg.type, msg.amount || 0, msg.username || '');
       return;
     }
 
@@ -223,6 +217,11 @@ wss.on('connection', (ws) => {
         streamStartTime = Date.now();
         saveState();
         console.log('[Stream] Inicio registrado');
+        break;
+      case 'manual_donation':
+        if (msg.username && msg.amount) {
+          processEvent('donation', msg.amount, msg.username);
+        }
         break;
       case 'reset_contributors':
         Object.keys(contributors).forEach(k => delete contributors[k]);
